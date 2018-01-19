@@ -9,6 +9,8 @@
 #include <linux/usb/ch9.h>
 #include <linux/usb/composite.h>
 
+#include "f_mass_storage.h"
+
 /*-------------------------------------------------------------------------*/
 
 #define DRIVER_DESC 		"Mass Storage Gadget"
@@ -18,76 +20,7 @@
 #define FSG_PRODUCT_ID  0xa4a5  /* Linux-USB File-backed Storage Gadget */
 
 /*-------------------------------------------------------------------------*/
-
-#ifdef CONFIG_USB_GADGET_DEBUG_FILES
-
-#define FSG_MODULE_PARAMETERS(prefix, params)				\
-	__FSG_MODULE_PARAMETERS(prefix, params);			\
-	module_param_named(num_buffers, fsg_num_buffers, uint, S_IRUGO);\
-	MODULE_PARM_DESC(num_buffers, "Number of pipeline buffers")
-#else
-
-#define FSG_MODULE_PARAMETERS(prefix, params)				\
-	__FSG_MODULE_PARAMETERS(prefix, params)
-
-#endif
-
-/*-------------------------------------------------------------------------*/
-int fsg_common_set_cdev(struct fsg_common *common,
-			struct usb_composite_dev *cdev, bool can_stall);
-void fsg_common_set_sysfs(struct fsg_common *common, bool sysfs);
-int fsg_common_set_num_buffers(struct fsg_common *common, unsigned int n);
-int fsg_common_create_luns(struct fsg_common *common, struct fsg_config *cfg);
-void fsg_config_from_params(struct fsg_config *cfg,
-			    const struct fsg_module_parameters *params,
-			    unsigned int fsg_num_buffers);
-void fsg_common_set_inquiry_string(struct fsg_common *common, const char *vn,
-				   const char *pn);
-struct fsg_module_parameters {
-	char		*file[FSG_MAX_LUNS];
-	bool		ro[FSG_MAX_LUNS];
-	bool		removable[FSG_MAX_LUNS];
-	bool		cdrom[FSG_MAX_LUNS];
-	bool		nofua[FSG_MAX_LUNS];
-
-	unsigned int	file_count, ro_count, removable_count, cdrom_count;
-	unsigned int	nofua_count;
-	unsigned int	luns;	/* nluns */
-	bool		stall;	/* can_stall */
-};
-
-struct fsg_opts {
-	struct fsg_common *common;
-	struct usb_function_instance func_inst;
-	struct fsg_lun_opts lun0;
-	struct config_group *default_groups[2];
-	bool no_configfs; /* for legacy gadgets */
-
-	/*
-	 * Read/write access to configfs attributes is handled by configfs.
-	 *
-	 * This is to protect the data from concurrent access by read/write
-	 * and create symlink/remove symlink.
-	 */
-	struct mutex			lock;
-	int				refcnt;
-};
-
-struct fsg_config {
-	unsigned nluns;
-	struct fsg_lun_config luns[FSG_MAX_LUNS];
-
-	/* Callback functions. */
-	const struct fsg_operations	*ops;
-	/* Gadget's private data. */
-	void			*private_data;
-
-	const char *vendor_name;		/*  8 characters or less */
-	const char *product_name;		/* 16 characters or less */
-
-	char			can_stall;
-	unsigned int		fsg_num_buffers;
-};
+USB_GADGET_COMPOSITE_OPTIONS();
 /*-------------------------------------------------------------------------*/
 /*USB_DT_DEVICE: Device descriptor*/
 static struct usb_device_descriptor msg_device_desc = {
@@ -169,11 +102,6 @@ static unsigned int fsg_num_buffers = CONFIG_USB_GADGET_STORAGE_NUM_BUFFERS;
 
 FSG_MODULE_PARAMETERS(/* no prefix */, mod_data);
 
-static inline struct fsg_opts *
-fsg_opts_from_func_inst(const struct usb_function_instance *fi)
-{
-	return container_of(fi, struct fsg_opts, func_inst);
-}
 /**
  * gadget_is_otg - return true iff the hardware is OTG-ready
  * @g: controller that might have a Mini-AB connector
@@ -375,13 +303,12 @@ static struct usb_composite_driver msg_driver = {
 
 static int __init msg_init(void)
 {
-	pr_info("%s: Init\n",__func__);
-	return 0;
+	return usb_composite_probe(&msg_driver);
 }
 
 static void __exit msg_cleanup(void)
 {
-	pr_info("%s: Exit\n",__func__);	
+	usb_composite_unregister(&msg_driver);
 }
 
 module_init(msg_init);
