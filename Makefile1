@@ -1,7 +1,6 @@
 obj-m := m_slave.o
 m_slave-y := slave_mass_storage.o
-obj-m += usb_f_mass_storage.o 
-usb_f_mass_storage-y := f_mass_storage.o storage_common.o
+
 
 KDIR=/home/elinux/linux-4.4.96
 
