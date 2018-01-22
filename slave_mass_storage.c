@@ -301,11 +301,34 @@ static struct usb_composite_driver msg_driver = {
 
 };
 
+/**
+ * usb_composite_probe() - register a composite driver
+ * @driver: the driver to register
+ *
+ * Context: single threaded during gadget setup
+ *
+ * This function is used to register drivers using the composite driver
+ * framework.  The return value is zero, or a negative errno value.
+ * Those values normally come from the driver's @bind method, which does
+ * all the work of setting up the driver to match the hardware.
+ *
+ * On successful return, the gadget is ready to respond to requests from
+ * the host, unless one of its components invokes usb_gadget_disconnect()
+ * while it was binding.  That would usually be done in order to wait for
+ * some userspace participation.
+ */
 static int __init msg_init(void)
 {
 	return usb_composite_probe(&msg_driver);
 }
 
+/**
+ * usb_composite_unregister() - unregister a composite driver
+ * @driver: the driver to unregister
+ *
+ * This function is used to unregister drivers using the composite
+ * driver framework.
+ */
 static void __exit msg_cleanup(void)
 {
 	usb_composite_unregister(&msg_driver);
