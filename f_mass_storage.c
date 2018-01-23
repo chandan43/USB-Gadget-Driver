@@ -1702,7 +1702,7 @@ static int check_command(struct fsg_common *common, int cmnd_size,
 	char			hdlen[20];
 	struct fsg_lun		*curlun;
 	
-	pr_info("%s",__func__);
+	pr_info("%s: ---------------------->>>>>>>>>>>>>\n",__func__);
 	hdlen[0] = 0;
 	if (common->data_dir != DATA_DIR_UNKNOWN)
 		sprintf(hdlen, ", H%c=%u", dirletter[(int) common->data_dir],
