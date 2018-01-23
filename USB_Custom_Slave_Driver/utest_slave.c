@@ -19,7 +19,11 @@ module_param_named(alt, override_alt, int, 0644);
 MODULE_PARM_DESC(alt, ">= 0 to override altsetting selection");
 
 /*-------------------------------------------------------------------------*/
-
+/*USB kobject*/
+struct kobject *usb_kobj;
+struct usbtest_dev	*dev;
+static int ledstatus;
+/*-------------------------------------------------------------------------*/
 /* FIXME make these public somewhere; usbdevfs.h? */
 struct usbtest_param {
 	/* inputs */
@@ -257,6 +261,108 @@ static unsigned mod_pattern;
 module_param_named(pattern, mod_pattern, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(mod_pattern, "i/o pattern (0 == zeroes)");
 /*-------------------------------------------------------------------------*/
+/*USB control LED : ON : cmd ::  0x5b */
+
+static int usb_led_on(struct usbtest_dev *dev)
+{
+	u8                      *buf;
+	struct usb_device       *udev;
+	unsigned length = 8; 
+	char			*what = "?";
+	int 	retval;
+	
+	buf = kmalloc(length, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	udev = testdev_to_usbdev(dev);
+	/*Just putting any value : No meaning */
+	buf[2] = (u8)(3);
+	retval = 0;
+	retval = usb_control_msg(udev, usb_sndctrlpipe(udev, 0),
+				0x5b, USB_DIR_OUT|USB_TYPE_VENDOR,
+				0, 0, buf, length, USB_CTRL_SET_TIMEOUT);
+	if (retval != length) {
+		what = "write";
+		if (retval >= 0) {
+			ERROR(dev, "ctrl_out, wlen %d (expected %d)\n",
+					retval, length);
+			retval = -EBADMSG;
+		}
+	}
+	/* read it back -- assuming nothing intervened!!  */
+	retval = usb_control_msg(udev, usb_rcvctrlpipe(udev, 0),
+			0x5c, USB_DIR_IN|USB_TYPE_VENDOR,
+			0, 0, buf, length, USB_CTRL_GET_TIMEOUT);
+	if (retval != length) {
+		what = "read";
+		if (retval >= 0) {
+			ERROR(dev, "ctrl_out, rlen %d (expected %d)\n",
+						retval, length);
+			retval = -EBADMSG;
+		}
+	}
+
+	if (retval < 0)
+		ERROR(dev, "ctrl_out %s failed, code %d, count %d\n",
+			what, retval, length);
+
+	kfree(buf);
+	return retval;
+}
+
+
+/*USB control LED : OFF : cmd ::  0x5d */
+
+static int usb_led_off(struct usbtest_dev *dev)
+{
+	u8                      *buf;
+	struct usb_device       *udev;
+	unsigned length = 8; 
+	char			*what = "?";
+	int 	retval;
+	
+	buf = kmalloc(length, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	udev = testdev_to_usbdev(dev);
+	/*Just putting any value : No meaning */
+	buf[2] = (u8)(3);
+	retval = 0;
+	retval = usb_control_msg(udev, usb_sndctrlpipe(udev, 0),
+				0x5d, USB_DIR_OUT|USB_TYPE_VENDOR,
+				0, 0, buf, length, USB_CTRL_SET_TIMEOUT);
+	if (retval != length) {
+		what = "write";
+		if (retval >= 0) {
+			ERROR(dev, "ctrl_out, wlen %d (expected %d)\n",
+					retval, length);
+			retval = -EBADMSG;
+		}
+	}
+	/* read it back -- assuming nothing intervened!!  */
+	retval = usb_control_msg(udev, usb_rcvctrlpipe(udev, 0),
+			0x5c, USB_DIR_IN|USB_TYPE_VENDOR,
+			0, 0, buf, length, USB_CTRL_GET_TIMEOUT);
+	if (retval != length) {
+		what = "read";
+		if (retval >= 0) {
+			ERROR(dev, "ctrl_out, rlen %d (expected %d)\n",
+						retval, length);
+			retval = -EBADMSG;
+		}
+	}
+
+	if (retval < 0)
+		ERROR(dev, "ctrl_out %s failed, code %d, count %d\n",
+			what, retval, length);
+
+	kfree(buf);
+	return retval;
+}
+
+/*-------------------------------------------------------------------------*/
 
 /* Control OUT tests use the vendor control requests from Intel's
  * USB 2.0 compliance test device:  write a buffer, read it back.
@@ -286,7 +392,8 @@ static int ctrl_out(struct usbtest_dev *dev,
 	udev = testdev_to_usbdev(dev);
 	len = length;
 	retval = 0;
-
+	
+		
 	/* NOTE:  hardware might well act differently if we pushed it
 	 * with lots back-to-back queued requests.
 	 */
@@ -472,6 +579,91 @@ usbtest_ioctl(struct usb_interface *intf, unsigned int code, void *buf)
 }
 
 /*-------------------------------------------------------------------------*/
+static ssize_t usb_led_store(struct kobject *kobj, struct kobj_attribute *attr,
+		 const char *buf, size_t count)
+{
+	int 			d,ret;
+	int			retval = -EOPNOTSUPP;
+	
+	if (mutex_lock_interruptible(&dev->lock))
+		return -ERESTARTSYS;
+
+	/* FIXME: What if a system sleep starts while a test is running? */
+
+	/* some devices, like ez-usb default devices, need a non-default
+	 * altsetting to have any active endpoints.  some tests change
+	 * altsettings; force a default so most tests don't need to check.
+	 */
+	if (dev->info->alt >= 0) {
+		int	res;
+
+		if (dev->intf->altsetting->desc.bInterfaceNumber) {
+			mutex_unlock(&dev->lock);
+			return -ENODEV;
+		}
+		res = set_altsetting(dev, dev->info->alt);
+		if (res) {
+			dev_err(&dev->intf->dev,
+					"set altsetting to %d failed, %d\n",
+					dev->info->alt, res);
+			mutex_unlock(&dev->lock);
+			return res;
+		}
+	}
+	
+	if (!dev->info->ctrl_out)
+		goto out;
+	
+	ret=sscanf(buf,"%d",&d);
+	if(ret < 0 || ret > 1 || d > 1)
+		return -EINVAL;
+	if(d == 0) {
+		retval = usb_led_off(dev);
+		dev_info(&dev->intf->dev, ": LED OFF \n");  
+	}else {
+		retval = usb_led_on(dev);
+		dev_info(&dev->intf->dev, ": LED ON \n");  
+	}
+	if(retval >= 0){
+		ledstatus = d;
+		retval = count;
+	}
+	
+	mutex_unlock(&dev->lock);
+	return retval;
+
+out:
+	pr_info("Device doesn't have control endpoint\n");
+	mutex_unlock(&dev->lock);
+	return -1;
+}
+static ssize_t usb_led_show(struct kobject *kobj, struct kobj_attribute *attr, 
+		char *buf)
+{
+	char rbuf;
+	if(ledstatus) {
+		rbuf = 1;
+		pr_info("USBTEST: Led is on...\n");
+		return sprintf(buf,"%d\n",rbuf);
+	}else {
+		rbuf = 0;
+		pr_info("USBTEST: Led is off...\n");
+		return sprintf(buf,"%d\n",rbuf);
+	}
+}
+/*-------------------------------------------------------------------------*/
+
+static struct kobj_attribute usbled     = __ATTR(usbled, 0660, usb_led_show,usb_led_store);
+
+static struct attribute *attrs[] = {
+        &usbled.attr,
+        NULL,
+};
+
+static struct attribute_group attr_group = {
+        .attrs = attrs,
+};
+/*-------------------------------------------------------------------------*/
 
 static unsigned force_interrupt;
 module_param(force_interrupt, uint, 0);
@@ -491,12 +683,11 @@ static int
 usbtest_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
 	struct usb_device	*udev;
-	struct usbtest_dev	*dev;
 	struct usbtest_info	*info;
 	char			*rtest, *wtest;
 	char			*irtest, *iwtest;
 	char			*intrtest, *intwtest;
-
+	int 			ret;
 	udev = interface_to_usbdev(intf);
 
 #ifdef	GENERIC
@@ -590,6 +781,14 @@ usbtest_probe(struct usb_interface *intf, const struct usb_device_id *id)
 			irtest, iwtest,
 			intrtest, intwtest,
 			info->alt >= 0 ? " (+alt)" : "");
+	/*Creation of sys interface to communicate with user-space*/
+	usb_kobj=kobject_create_and_add("USB_TEST", NULL);
+	if(!usb_kobj)
+		return -ENOMEM;
+	ret= sysfs_create_group(usb_kobj, &attr_group);
+	if(ret)
+		kobject_put(usb_kobj);
+
 	return 0;
 }
 
@@ -611,6 +810,7 @@ static void usbtest_disconnect(struct usb_interface *intf)
 	usb_set_intfdata(intf, NULL);
 	dev_dbg(&intf->dev, "disconnect\n");
 	kfree(dev);
+	kobject_put(usb_kobj);
 }
 
 /* Basic testing only needs a device that can source or sink bulk traffic.
@@ -642,7 +842,7 @@ static struct usbtest_info gz_info = {
 static const struct usb_device_id id_table[] = {
 
 	/*-------------------------------------------------------------*/
-	/* "Gadget Zero" firmware runs under Linux */
+	/* "Gadget Zero (for Custom device)" firmware runs under Linux */
 	{ USB_DEVICE(0x0525, 0xa4a0),
 		.driver_info = (unsigned long) &gz_info,
 	},
@@ -680,6 +880,6 @@ static void __exit usbtest_exit(void)
 }
 module_exit(usbtest_exit);
 
-MODULE_DESCRIPTION("USB Core/HCD Testing Driver");
+MODULE_AUTHOR("Chandan Jha <beingchandanjha@gmail.com>");
+MODULE_DESCRIPTION("USB CUSTOM Gadget Testing Driver");
 MODULE_LICENSE("GPL");
-
